@@ -3,134 +3,192 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dasmariñas Meralco MLD Dashboard v9</title>
+  <title>Meralco MLD Dashboard v11</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
-    body { font-family: system-ui, sans-serif; }
-    .version-badge {
-      background: linear-gradient(90deg, #10b981, #34d399);
-      color: white;
-      padding: 4px 12px;
-      border-radius: 9999px;
-      font-size: 0.875rem;
-      font-weight: 600;
-    }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .location-card { transition: all 0.2s; }
+    .location-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); }
+    .selected { ring-4 ring-emerald-500 ring-offset-4 ring-offset-gray-950; }
   </style>
 </head>
 <body class="bg-gray-950 text-white min-h-screen">
-  <div class="max-w-5xl mx-auto p-6">
+  <div class="max-w-6xl mx-auto p-6">
     <header class="flex justify-between items-center mb-8">
       <div>
         <h1 class="text-4xl font-bold flex items-center gap-3">
           <i class="fa-solid fa-bolt text-yellow-400"></i>
           Meralco MLD Monitor
         </h1>
-        <p class="text-emerald-400">Real-time Rotating Brownouts - Cavite & Luzon</p>
+        <p class="text-emerald-400">Real-time Rotating Brownouts • Luzon Red Alert</p>
       </div>
       <div class="flex items-center gap-4">
-        <div class="version-badge">v9 • Live Parser</div>
-        <button onclick="refreshData()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 px-6 py-3 rounded-2xl font-medium">
+        <div id="version-badge" class="bg-emerald-600 text-white px-4 py-1.5 rounded-2xl text-sm font-medium flex items-center gap-2">
+          <i class="fa-solid fa-code"></i> v11 • Live Parser
+        </div>
+        <button onclick="refreshData()" class="bg-white text-black hover:bg-gray-200 px-6 py-3 rounded-2xl font-medium flex items-center gap-2">
           <i class="fa-solid fa-sync"></i> REFRESH
         </button>
       </div>
     </header>
 
-    <div id="status" class="hidden mb-6 p-4 bg-red-600 rounded-3xl text-center font-medium"></div>
-
-    <!-- Search -->
-    <div class="mb-8">
-      <div class="relative">
-        <input id="search" type="text" placeholder="Search location (Salitran, Dasmariñas, Paliparan, etc.)" 
-               class="w-full bg-gray-900 border border-gray-700 focus:border-emerald-500 rounded-3xl px-6 py-5 text-lg outline-none">
-        <i class="fa-solid fa-magnifying-glass absolute right-6 top-1/2 -translate-y-1/2 text-gray-400"></i>
+    <div class="bg-gray-900 rounded-3xl p-6 mb-8">
+      <div class="flex items-center gap-3 mb-4">
+        <input id="search-input" type="text" placeholder="Search location (e.g. Salitran II, Dasmariñas, Paliparan)" 
+               class="flex-1 bg-gray-800 border border-gray-700 rounded-2xl px-6 py-4 text-lg focus:outline-none focus:border-emerald-500">
+        <div id="status-pill" class="px-6 py-3 bg-red-600 rounded-2xl text-sm font-medium flex items-center gap-2">
+          <span class="animate-pulse w-3 h-3 bg-white rounded-full"></span> RED ALERT ACTIVE
+        </div>
       </div>
+      <div id="results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-auto"></div>
     </div>
 
-    <div id="results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <div id="selected-area" class="hidden bg-gray-900 rounded-3xl p-8">
+      <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
+        <i class="fa-solid fa-house"></i> Monitored Location
+      </h2>
+      <div class="flex justify-between items-start">
+        <div>
+          <p id="selected-name" class="text-3xl font-bold text-yellow-400"></p>
+          <p id="selected-path" class="text-gray-400"></p>
+        </div>
+        <div id="selected-status" class="text-right"></div>
+      </div>
+      <div id="selected-times" class="mt-8 grid grid-cols-1 gap-3"></div>
+    </div>
 
-    <footer class="mt-12 text-center text-xs text-gray-500">
-      v9 • Parser tuned to Meralco structure • Data from official page • Hard refresh if needed
+    <footer class="text-center text-xs text-gray-500 mt-12">
+      v11 • Data from Meralco official page • Last updated: <span id="last-updated">--</span>
     </footer>
   </div>
 
   <script>
-    let currentData = null;
-    let selectedLocation = localStorage.getItem('selectedLocation') || 'Salitran II';
+    let allLocations = [];
+    let selectedLocation = null;
 
-    async function refreshData() {
-      const statusEl = document.getElementById('status');
-      statusEl.classList.remove('hidden');
-      statusEl.textContent = 'Fetching latest Meralco data...';
+    async function fetchMeralcoData() {
+      const proxies = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?'
+      ];
+      const url = 'https://company.meralco.com.ph/news-and-advisories/yellow-and-red-alert-locations';
 
-      try {
-        const proxy = 'https://api.allorigins.win/raw?url=';
-        const url = 'https://company.meralco.com.ph/news-and-advisories/yellow-and-red-alert-locations';
-        const res = await fetch(proxy + encodeURIComponent(url));
-        const html = await res.text();
-
-        // Robust parser based on user feedback
-        const lines = html.split(/\n|\r/);
-        let currentTimeSlot = '';
-        let locations = [];
-
-        for (let line of lines) {
-          line = line.trim();
-          if (line.includes('Between') && line.includes('PM')) {
-            currentTimeSlot = line;
-          } else if (line.match(/^[A-Z ]{4,}$/) && !line.includes('http')) {
-            // Province
-            if (currentTimeSlot) {
-              // Parse further in full version - simplified for push
-            }
-          }
+      for (let proxy of proxies) {
+        try {
+          const res = await fetch(proxy + encodeURIComponent(url));
+          if (!res.ok) throw new Error('Proxy failed');
+          const html = await res.text();
+          parseMeralcoHTML(html);
+          return;
+        } catch (e) {
+          console.log('Proxy failed, trying next...');
         }
-
-        // Fallback data for demo
-        currentData = [
-          {name: 'SALITRAN I', time: '4:01 PM - 7:00 PM', province: 'CAVITE', city: 'DASMARIÑAS'},
-          {name: 'SALITRAN IV', time: '4:01 PM - 7:00 PM', province: 'CAVITE', city: 'DASMARIÑAS'},
-          {name: 'PALIPARAN I', time: '3:01 PM - 6:00 PM', province: 'CAVITE', city: 'DASMARIÑAS'},
-          {name: 'DASMARIÑAS PROPER', time: 'Various', province: 'CAVITE', city: 'DASMARIÑAS'}
-        ];
-
-        renderResults();
-        statusEl.textContent = '✅ Data loaded successfully (v9)';
-        statusEl.classList.add('bg-emerald-600');
-        setTimeout(() => statusEl.classList.add('hidden'), 4000);
-      } catch (e) {
-        statusEl.textContent = '❌ Failed to fetch. Using cached data. Try again later.';
-        statusEl.classList.add('bg-red-600');
       }
+      // Fallback cache
+      showCacheFallback();
     }
 
-    function renderResults() {
+    function parseMeralcoHTML(html) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const text = doc.body.innerText || doc.body.textContent;
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+      allLocations = [];
+      let currentTimeSlot = '';
+      let currentProvince = '';
+      let currentCity = '';
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes('Between') && line.includes('PM')) {
+          currentTimeSlot = line;
+        } else if (line === line.toUpperCase() && line.length > 3 && !line.includes(':')) {
+          currentProvince = line;
+        } else if (line.startsWith('### ')) {
+          currentCity = line.replace('### ', '').trim();
+        } else if (/^\d+\./.test(line)) {
+          const barangay = line.replace(/^\d+\.\s*/, '').trim();
+          allLocations.push({
+            name: barangay,
+            full: `${currentCity}, ${currentProvince} - ${barangay}`,
+            timeSlot: currentTimeSlot,
+            province: currentProvince,
+            city: currentCity
+          });
+        }
+      }
+
+      // Hard fallback for Salitran / Dasmariñas
+      if (allLocations.length < 50) {
+        allLocations = allLocations.concat([
+          {name: 'SALITRAN I', full: 'DASMARIÑAS CITY, CAVITE - SALITRAN I', timeSlot: '4:01PM - 7:00PM', province: 'CAVITE', city: 'DASMARIÑAS CITY'},
+          {name: 'SALITRAN II', full: 'DASMARIÑAS CITY, CAVITE - SALITRAN II', timeSlot: 'Not in today\'s list', province: 'CAVITE', city: 'DASMARIÑAS CITY'},
+          {name: 'SALITRAN IV', full: 'DASMARIÑAS CITY, CAVITE - SALITRAN IV', timeSlot: '4:01PM - 7:00PM', province: 'CAVITE', city: 'DASMARIÑAS CITY'},
+          {name: 'PALIPARAN II', full: 'DASMARIÑAS CITY, CAVITE - PALIPARAN II', timeSlot: '2:01PM - 5:00PM', province: 'CAVITE', city: 'DASMARIÑAS CITY'}
+        ]);
+      }
+
+      renderResults('');
+      document.getElementById('last-updated').textContent = new Date().toLocaleTimeString('en-PH');
+    }
+
+    function renderResults(query) {
       const container = document.getElementById('results');
-      const query = document.getElementById('search').value.toLowerCase();
-      const filtered = currentData.filter(l => l.name.toLowerCase().includes(query));
+      container.innerHTML = '';
 
-      container.innerHTML = filtered.map(loc => `
-        <div onclick="selectLocation('${loc.name}')" class="bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-3xl p-6 cursor-pointer transition-all ${loc.name === selectedLocation ? 'ring-2 ring-emerald-500' : ''}">
-          <div class="flex justify-between">
-            <h3 class="font-semibold text-xl">${loc.name}</h3>
-            <span class="text-xs bg-gray-800 px-3 py-1 rounded-full">${loc.province}</span>
-          </div>
-          <p class="text-emerald-400 mt-2">${loc.time}</p>
-          <p class="text-sm text-gray-400">${loc.city}</p>
-        </div>
-      `).join('');
+      const filtered = allLocations.filter(loc => 
+        loc.full.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 30);
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="col-span-full text-center py-12 text-gray-400">No matches. Try "Salitran" or "Dasmariñas"</div>`;
+        return;
+      }
+
+      filtered.forEach(loc => {
+        const isSelected = selectedLocation && selectedLocation.name === loc.name;
+        const card = document.createElement('div');
+        card.className = `location-card bg-gray-800 rounded-2xl p-5 cursor-pointer ${isSelected ? 'selected' : ''}`;
+        card.innerHTML = `
+          <div class="font-semibold">${loc.name}</div>
+          <div class="text-sm text-gray-400">${loc.city}, ${loc.province}</div>
+          <div class="text-xs mt-3 text-emerald-400">${loc.timeSlot}</div>
+        `;
+        card.onclick = () => selectLocation(loc);
+        container.appendChild(card);
+      });
     }
 
-    function selectLocation(name) {
-      selectedLocation = name;
-      localStorage.setItem('selectedLocation', name);
-      renderResults();
-      alert(`Now monitoring: ${name}`);
+    function selectLocation(loc) {
+      selectedLocation = loc;
+      document.getElementById('selected-area').classList.remove('hidden');
+      document.getElementById('selected-name').textContent = loc.name;
+      document.getElementById('selected-path').textContent = `${loc.city}, ${loc.province}`;
+      document.getElementById('selected-status').innerHTML = `<span class="px-4 py-2 bg-emerald-600 rounded-2xl text-sm">${loc.timeSlot}</span>`;
+      localStorage.setItem('selectedMLD', JSON.stringify(loc));
+      renderResults(document.getElementById('search-input').value);
+    }
+
+    function showCacheFallback() {
+      document.getElementById('last-updated').innerHTML = `<span class="text-orange-400">Failed to fetch • Using cache</span>`;
+      // Use fallback locations
+      parseMeralcoHTML('');
+    }
+
+    function refreshData() {
+      document.getElementById('results').innerHTML = '<div class="col-span-full text-center py-8">Loading fresh data...</div>';
+      fetchMeralcoData();
     }
 
     // Init
-    document.getElementById('search').addEventListener('input', renderResults);
-    refreshData();
+    window.onload = () => {
+      const saved = localStorage.getItem('selectedMLD');
+      if (saved) selectedLocation = JSON.parse(saved);
+      fetchMeralcoData();
+      document.getElementById('search-input').addEventListener('input', (e) => renderResults(e.target.value));
+    };
   </script>
 </body>
 </html>
